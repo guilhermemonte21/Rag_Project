@@ -9,7 +9,10 @@ from langchain_core.runnables import RunnablePassthrough
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_huggingface import HuggingFaceEmbeddings
-
+from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.prompts import MessagesPlaceholder
+from langchain_core.runnables import RunnableLambda
 
 load_dotenv()
 api_key = os.getenv("GOOGLE_API_KEY")
@@ -52,20 +55,51 @@ prompt = ChatPromptTemplate.from_messages([
      "Você é um Engenheiro de Software especializado em arquitetura de microsserviços. "
      "Use o contexto abaixo para responder. "
      "Se não souber, diga que não sabe.\n\n{context}"),
+    MessagesPlaceholder("history"), 
     ("human", "{input}"),
 ])
+def get_context(input_dict):
+
+    pergunta = input_dict["input"] if isinstance(input_dict, dict) else input_dict
+    docs = retriever.invoke(pergunta)
+    return format_docs(docs)
+
+store = {}
+
+def get_session_history(session_id: str):
+    if session_id not in store:
+        store[session_id] = InMemoryChatMessageHistory()
+    return store[session_id]
 
 rag_chain = (
-    {"context": retriever | format_docs, "input": RunnablePassthrough()}
+    RunnablePassthrough.assign(
+        context=get_context
+    )
     | prompt
     | llm
     | StrOutputParser()
 )
 
+rag_chain_with_history = RunnableWithMessageHistory(
+    rag_chain,
+    get_session_history,
+    input_messages_key="input",
+    history_messages_key="history"
+)
+
+
+
+
+
+
+
 def perguntar(pergunta: str):
     print(f"\n--- Pergunta: {pergunta} ---")
-    return rag_chain.invoke(pergunta)
-
+    resposta = rag_chain_with_history.invoke(
+        {"input": pergunta},
+        config={"configurable": {"session_id": "chat1"}}
+    )
+    return resposta
 if __name__ == "__main__":
     if chunks:
         print("\nChatbot pronto! Digite 'sair' para encerrar.\n")
